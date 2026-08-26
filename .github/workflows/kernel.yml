@@ -7,6 +7,16 @@ on:
         description: 'Git revision of rocko5498/android_kernel_oneplus_sm8450 to build'
         required: true
         default: '7669ea3eea6dcc83be271add1745bbc858a9809e'
+      add_kernelsu:
+        description: 'Integrate KernelSU (official tiann/KernelSU) into the kernel'
+        required: true
+        default: 'yes'
+        type: choice
+        options: ['yes', 'no']
+      kernelsu_tag:
+        description: 'KernelSU tag to integrate (manager APK must match)'
+        required: true
+        default: 'v3.2.5'
       build_modules:
         description: 'Also compile the out-of-tree Qualcomm modules (artifacts only, best-effort)'
         required: true
@@ -26,6 +36,8 @@ jobs:
     name: OnePlus 11R (udon) — GKI waipio kernel
     runs-on: ubuntu-latest
     timeout-minutes: 300
+    env:
+      KSU_SUFFIX: ${{ inputs.add_kernelsu == 'yes' && '-ksu' || '' }}
     steps:
       - name: Runner specs
         run: |
@@ -52,6 +64,15 @@ jobs:
           git checkout ${{ inputs.kernel_revision }}
           echo "kernel commit: $(git log --oneline -1)"
 
+      - name: Integrate KernelSU (${{ inputs.kernelsu_tag }})
+        if: inputs.add_kernelsu == 'yes'
+        run: |
+          cd kernel
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s -- ${{ inputs.kernelsu_tag }}
+          echo "=== KernelSU sources ==="
+          git -C KernelSU log --oneline -1
+          grep -n "kernelsu" drivers/Makefile drivers/Kconfig
+
       - name: Checkout Qualcomm external modules
         run: |
           git clone https://github.com/pjgowtham/android_kernel_oneplus_sm8450-modules modules
@@ -74,20 +95,28 @@ jobs:
         run: |
           cd kernel
           make O=out ARCH=arm64 LLVM=1 gki_defconfig
-          ./scripts/kconfig/merge_config.sh -m -O out \
-            out/.config \
-            arch/arm64/configs/vendor/waipio_GKI.config \
-            arch/arm64/configs/vendor/oplus_GKI.config \
-            arch/arm64/configs/vendor/debugfs.config
+          FRAGS="arch/arm64/configs/vendor/waipio_GKI.config \
+                 arch/arm64/configs/vendor/oplus_GKI.config \
+                 arch/arm64/configs/vendor/debugfs.config"
+          if [ "${{ inputs.add_kernelsu }}" = "yes" ]; then
+            printf 'CONFIG_KSU=y\n' > ksu.config
+            FRAGS="$FRAGS ksu.config"
+          fi
+          ./scripts/kconfig/merge_config.sh -m -O out out/.config $FRAGS
           make O=out ARCH=arm64 LLVM=1 olddefconfig
           echo "=== key config values ==="
-          grep -E "^CONFIG_(MODULES|MODVERSIONS|LOCALVERSION|LTO|DEFAULT_INIT|MODULE_SIG)" out/.config || true
+          grep -E "^CONFIG_(MODULES|MODVERSIONS|LOCALVERSION|LTO|DEFAULT_INIT|MODULE_SIG|KPROBES|KALLSYMS|OVERLAY_FS|KSU)" out/.config || true
+          if [ "${{ inputs.add_kernelsu }}" = "yes" ]; then
+            grep -q "^CONFIG_KSU=y" out/.config || { echo "FATAL: CONFIG_KSU not enabled!"; exit 1; }
+            echo "KernelSU enabled in config ✓"
+          fi
 
       - name: Build Image
         run: |
           cd kernel
           make -j"$(nproc)" O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 Image
           ls -lh out/arch/arm64/boot/Image
+          cp out/.config kernel.config
 
       - name: Build external modules (best-effort)
         if: inputs.build_modules == 'yes'
@@ -127,6 +156,16 @@ jobs:
           echo "modules ok=$ok fail=$fail"
           find "$PWD/../modules" -name '*.ko' -newer "$PWD/Makefile" -exec cp {} ../module-out/ \; 2>/dev/null || true
           echo "total .ko collected: $(ls ../module-out/*.ko 2>/dev/null | wc -l)"
+
+      - name: Fetch KernelSU manager APK (matching version)
+        if: inputs.add_kernelsu == 'yes'
+        run: |
+          APK_URL=$(curl -sfL -H "Authorization: Bearer ${{ github.token }}" \
+            "https://api.github.com/repos/tiann/KernelSU/releases/tags/${{ inputs.kernelsu_tag }}" \
+            | python3 -c "import json,sys; r=json.load(sys.stdin); print(next(a['browser_download_url'] for a in r['assets'] if a['name'].endswith('.apk')))")
+          echo "manager: $APK_URL"
+          wget -q "$APK_URL" -O KernelSU-manager.apk
+          ls -lh KernelSU-manager.apk
 
       - name: Package AnyKernel3 zip
         run: |
@@ -177,19 +216,21 @@ jobs:
           write_boot;
           ## end boot install
           AKEOF
+          sed -i "s/^kernel.string=.*/kernel.string=udon-kernel${KSU_SUFFIX} (RisingOS sixteen-qpr2 source)/" anykernel/anykernel.sh
           cd anykernel
-          zip -r9 ../udon-kernel-AnyKernel3.zip .
+          zip -r9 "../udon-kernel${KSU_SUFFIX}-AnyKernel3.zip" .
           cd ..
-          ls -lh udon-kernel-AnyKernel3.zip
+          ls -lh "udon-kernel${KSU_SUFFIX}-AnyKernel3.zip"
 
       - name: Upload build artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: udon-kernel-build-${{ github.run_number }}
+          name: udon-kernel${{ env.KSU_SUFFIX }}-build-${{ github.run_number }}
           path: |
-            udon-kernel-AnyKernel3.zip
-            kernel/out/.config
+            udon-kernel*-AnyKernel3.zip
+            kernel.config
+            KernelSU-manager.apk
             module-out/*.ko
             module-out/*.log
           if-no-files-found: warn
@@ -198,17 +239,19 @@ jobs:
         if: success()
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: kernel-${{ github.run_number }}
-          name: udon kernel build ${{ github.run_number }}
+          tag_name: kernel${{ env.KSU_SUFFIX }}-${{ github.run_number }}
+          name: udon kernel${{ env.KSU_SUFFIX }} build ${{ github.run_number }}
           body: |
             OnePlus 11R (udon) kernel built from the exact source used by RisingOS sixteen-qpr2:
 
             - kernel: rocko5498/android_kernel_oneplus_sm8450 @ ${{ inputs.kernel_revision }}
             - config: gki_defconfig + vendor/waipio_GKI.config + vendor/oplus_GKI.config + vendor/debugfs.config
             - toolchain: AOSP clang-r536225, LLVM=1 LLVM_IAS=1
+            ${{ inputs.add_kernelsu == 'yes' && format('- KernelSU: tiann/KernelSU @ {0} (manager APK attached, versions must match)', inputs.kernelsu_tag) || '- no KernelSU' }}
 
-            Flash `udon-kernel-AnyKernel3.zip` in recovery or via adb sideload.
+            Flash `udon-kernel${{ env.KSU_SUFFIX }}-AnyKernel3.zip` in recovery or via adb sideload.
           files: |
-            udon-kernel-AnyKernel3.zip
-            kernel/out/.config
+            udon-kernel*-AnyKernel3.zip
+            kernel.config
+            KernelSU-manager.apk
           make_latest: true
