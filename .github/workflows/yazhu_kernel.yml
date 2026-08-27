@@ -6,7 +6,7 @@ on:
       kernel_version_tag:
         description: 'Yazhu Kernel Version Tag'
         required: true
-        default: 'v1.0-Release'
+        default: 'v1.0'
       add_kernelsu:
         description: 'Integrate KernelSU into Yazhu Kernel'
         required: true
@@ -58,7 +58,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq bc bison flex cpio libncurses5-dev libncurses-dev \
-            libssl-dev lz4 zstd libelf-dev zip unzip python3 python-is-python3 rsync
+            libssl-dev lz4 zstd libelf-dev zip unzip python3 python-is-python3 rsync curl wget
 
       - name: Free Disk Space
         run: |
@@ -68,7 +68,7 @@ jobs:
 
       - name: Checkout OnePlus 11R SM8450/SM8475 Kernel Source
         run: |
-          git clone --depth=1 https://github.com/rocko5498/android_kernel_oneplus_sm8450 -b sixteen-qpr2 kernel
+          git clone --depth=1 -b lineage-23.2 https://github.com/rocko5498/android_kernel_oneplus_sm8450 kernel
           cd kernel
           echo "Kernel Commit: $(git log --oneline -1)"
 
@@ -88,7 +88,7 @@ jobs:
 
       - name: Checkout Qualcomm External Driver Modules
         run: |
-          git clone --depth=1 https://github.com/pjgowtham/android_kernel_oneplus_sm8450-modules modules
+          git clone --depth=1 -b lineage-23.2 https://github.com/pjgowtham/android_kernel_oneplus_sm8450-modules modules
           cd modules
           echo "Modules Commit: $(git log --oneline -1)"
 
@@ -237,7 +237,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Yazhu-Kernel-OnePlus11R${{ env.KSU_SUFFIX }}-${{ github.sha }}
+          name: Yazhu-Kernel-OnePlus11R${{ env.KSU_SUFFIX }}-${{ github.run_number }}
           path: |
             Yazhu-Kernel-OnePlus11R*-AnyKernel3.zip
             kernel/out/arch/arm64/boot/Image
@@ -250,7 +250,7 @@ jobs:
         if: success()
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: Yazhu-Kernel-${{ inputs.kernel_version_tag }}${{ env.KSU_SUFFIX }}
+          tag_name: Yazhu-Kernel-${{ inputs.kernel_version_tag }}${{ env.KSU_SUFFIX }}-${{ github.run_number }}
           name: Yazhu Kernel for OnePlus 11R (${{ inputs.kernel_version_tag }}${{ env.KSU_SUFFIX }})
           body: |
             ## ⚡ Yazhu Kernel for OnePlus 11R 5G (`udon` / `aston` / `CPH2487`)
