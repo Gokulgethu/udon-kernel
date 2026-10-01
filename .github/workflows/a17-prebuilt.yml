@@ -177,7 +177,11 @@ jobs:
             ["datarmnet-ext/aps"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/datarmnet/core/Module.symvers"
             ["datarmnet-ext/offload"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/datarmnet/core/Module.symvers"
             ["datarmnet-ext/shs"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/datarmnet/core/Module.symvers"
-            ["datarmnet-ext/perf"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/datarmnet/core/Module.symvers"
+            # rmnet_perf_main.c references the legacy hook pointers
+            # rmnet_perf_{in,eg}ress_hook1 that nothing in this kernel defines;
+            # the reference A17 package ships rmnet_perf.ko with those symbols
+            # undefined (nm -u), so downgrade modpost to a warning like upstream.
+            ["datarmnet-ext/perf"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/datarmnet/core/Module.symvers KBUILD_MODPOST_WARN=1"
             ["datarmnet-ext/perf_tether"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/datarmnet/core/Module.symvers"
             ["datarmnet-ext/sch"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/datarmnet/core/Module.symvers"
             ["datarmnet-ext/wlan"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/datarmnet/core/Module.symvers"
@@ -213,6 +217,12 @@ jobs:
             curl -sf -o "$f" "$BASE/$f" || { echo "FATAL: cannot fetch $f"; exit 1; }
             echo "$f: $(wc -l < $f) entries"
           done
+          # oplus_bsp_sched_assist.ko: no source exists in the 5.10 kernel (A16 lists
+          # never had it; inert entry from the A17 list refresh) - drop it everywhere
+          # so both the completeness check and the packaged list agree.
+          grep -v '^oplus_bsp_sched_assist.ko$' modules.load.recovery > modules.load.recovery.tmp
+          mv modules.load.recovery.tmp modules.load.recovery
+          echo "modules.load.recovery after scrub: $(wc -l < modules.load.recovery) entries"
 
       - name: Assemble prebuilt kernel package
         run: |
@@ -248,9 +258,7 @@ jobs:
 
           # ---- list files inside the package (BoardConfig reads them from here) ----
           cp modules.load pkg/vendor_dlkm/modules.load
-          # oplus_bsp_sched_assist.ko: absent from the 5.10 kernel source entirely
-          # (A16 lists never had it; inert entry added with the A17 list refresh)
-          grep -v '^oplus_bsp_sched_assist.ko$' modules.load.recovery > pkg/vendor_ramdisk/modules.load.recovery
+          cp modules.load.recovery pkg/vendor_ramdisk/modules.load.recovery
           cp modules.load.vendor_boot pkg/vendor_ramdisk/modules.load
           # blocklist from the kernel source (qcom vendor blocklist for waipio)
           cp kernel/oneplus/sm8450/modules.vendor_blocklist.msm.waipio pkg/vendor_dlkm/modules.blocklist
