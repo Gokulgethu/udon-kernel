@@ -81,25 +81,28 @@ jobs:
           [ -f dtbs/dtbo.img ] || { echo "FATAL: dtbs/dtbo.img missing on ${{ inputs.dtbs_branch }}"; exit 1; }
           ls dtbs/*.dtb >/dev/null 2>&1 || { echo "FATAL: no base .dtb files on ${{ inputs.dtbs_branch }}"; exit 1; }
 
-      - name: Checkout kernel source (pinned)
+      # ROM-tree layout is REQUIRED: the techpack Kbuilds hardcode relative paths
+      # ($(srctree)/../sm8450-modules, ../../../../sm8450-modules from include/trace).
+      - name: Checkout kernel source (pinned, at kernel/oneplus/sm8450)
         run: |
-          git clone https://github.com/rocko5498/android_kernel_oneplus_sm8450 kernel
-          cd kernel
+          mkdir -p kernel/oneplus
+          git clone https://github.com/rocko5498/android_kernel_oneplus_sm8450 kernel/oneplus/sm8450
+          cd kernel/oneplus/sm8450
           git checkout ${{ inputs.kernel_revision }}
           echo "kernel commit: $(git log --oneline -1)"
 
       - name: Integrate KernelSU (${{ inputs.kernelsu_tag }})
         if: inputs.add_kernelsu == 'yes'
         run: |
-          cd kernel
+          cd kernel/oneplus/sm8450
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s -- ${{ inputs.kernelsu_tag }}
           git -C KernelSU log --oneline -1
           grep -n "kernelsu" drivers/Makefile drivers/Kconfig
 
-      - name: Checkout Qualcomm external modules (A17 / QSSI16)
+      - name: Checkout Qualcomm external modules (A17 / QSSI16, sibling of the kernel)
         run: |
-          git clone https://github.com/${{ inputs.modules_repo }} modules
-          cd modules
+          git clone https://github.com/${{ inputs.modules_repo }} kernel/oneplus/sm8450-modules
+          cd kernel/oneplus/sm8450-modules
           git checkout ${{ inputs.modules_revision }}
           echo "modules commit: $(git log --oneline -1)"
 
@@ -122,7 +125,7 @@ jobs:
 
       - name: Configure kernel (gki_defconfig + waipio/oplus/debugfs fragments)
         run: |
-          cd kernel
+          cd kernel/oneplus/sm8450
           make O=out ARCH=arm64 LLVM=1 gki_defconfig
           FRAGS="arch/arm64/configs/vendor/waipio_GKI.config \
                  arch/arm64/configs/vendor/oplus_GKI.config \
@@ -134,7 +137,7 @@ jobs:
           ./scripts/kconfig/merge_config.sh -m -O out out/.config $FRAGS
           make O=out ARCH=arm64 LLVM=1 olddefconfig
           echo "=== key config values ==="
-          grep -E "^CONFIG_(MODULES|MODVERSIONS|LOCALVERSION|LTO|DEFAULT_INIT|MODULE_SIG|KPROBES|KALLSYMS|OVERLAY_FS|KSU)" out/.config || true
+          grep -E "^CONFIG_(MODULES|MODVERSIONS|LOCALVERSION|LTO|DEFAULT_INIT|MODULE_SIG|KPROBES|KALLSYMS|OVERLAY_FS|KSU|ARCH_)" out/.config || true
           if [ "${{ inputs.add_kernelsu }}" = "yes" ]; then
             grep -q "^CONFIG_KSU=y" out/.config || { echo "FATAL: CONFIG_KSU not enabled!"; exit 1; }
           fi
@@ -142,51 +145,57 @@ jobs:
 
       - name: Build Image
         run: |
-          cd kernel
+          cd kernel/oneplus/sm8450
           make -j"$(nproc)" O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 Image
           ls -lh out/arch/arm64/boot/Image
           grep -m1 . out/include/generated/utsrelease.h | tee /tmp/kver.txt
 
       - name: Build in-tree modules
         run: |
-          cd kernel
+          cd kernel/oneplus/sm8450
           make -j"$(nproc)" O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 modules
           echo "in-tree .ko: $(find out -name '*.ko' | wc -l)"
 
-      - name: Build external modules (QSSI16 set)
+      # Techpack modules need the per-module KBUILD_OPTIONS the DLKM build normally
+      # provides (from each techpack's Android.mk). mmrm builds FIRST because
+      # camera/eva/video link against its exported symbols (KBUILD_EXTRA_SYMBOLS).
+      - name: Build external modules (QSSI16 set, ROM-faithful environment)
         run: |
-          cd kernel
-          # Explicit build units (proven in the A16 builder) - NOT find-discovered:
-          # sub-Kbuilds (audio-kernel/asoc/codecs, display-drivers/msm/iris, ...)
-          # are not standalone units and must not be built directly.
-          mods=(
-            "qcom/opensource/mmrm-driver"
-            "qcom/opensource/audio-kernel"
-            "qcom/opensource/camera-kernel"
-            "qcom/opensource/dataipa/drivers/platform/msm"
-            "qcom/opensource/datarmnet/core"
-            "qcom/opensource/datarmnet-ext/aps"
-            "qcom/opensource/datarmnet-ext/offload"
-            "qcom/opensource/datarmnet-ext/shs"
-            "qcom/opensource/datarmnet-ext/perf"
-            "qcom/opensource/datarmnet-ext/perf_tether"
-            "qcom/opensource/datarmnet-ext/sch"
-            "qcom/opensource/datarmnet-ext/wlan"
-            "qcom/opensource/display-drivers/msm"
-            "qcom/opensource/eva-kernel"
-            "qcom/opensource/video-driver"
-            "qcom/opensource/wlan/qcacld-3.0/.qca6490"
+          cd kernel/oneplus/sm8450
+          MODS="$PWD/../sm8450-modules/qcom/opensource"
+          KDIR="$PWD"
+          MK="O=out ARCH=arm64 LLVM=1 LLVM_IAS=1"
+          declare -A UNITS=(
+            ["mmrm-driver"]="MMRM_ROOT=$MODS/mmrm-driver BOARD_PLATFORM=taro"
+            ["audio-kernel"]="AUDIO_ROOT=$MODS/audio-kernel MODNAME=audio_dlkm BOARD_PLATFORM=taro CONFIG_SND_SOC_WAIPIO=m"
+            ["camera-kernel"]="CAMERA_KERNEL_ROOT=$MODS/camera-kernel KERNEL_ROOT=$KDIR MODNAME=camera BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/mmrm-driver/Module.symvers"
+            ["eva-kernel"]="EVA_ROOT=$MODS/eva-kernel BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/mmrm-driver/Module.symvers"
+            ["video-driver"]="VIDEO_ROOT=$MODS/video-driver MODNAME=msm_video BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/mmrm-driver/Module.symvers"
+            ["display-drivers/msm"]="DISPLAY_ROOT=$MODS/display-drivers BOARD_PLATFORM=taro"
+            ["dataipa/drivers/platform/msm"]="BOARD_PLATFORM=taro"
+            ["datarmnet/core"]="BOARD_PLATFORM=taro"
+            ["datarmnet-ext/aps"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro"
+            ["datarmnet-ext/offload"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro"
+            ["datarmnet-ext/shs"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro"
+            ["datarmnet-ext/perf"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro"
+            ["datarmnet-ext/perf_tether"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro"
+            ["datarmnet-ext/sch"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro"
+            ["datarmnet-ext/wlan"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro"
+            ["wlan/qcacld-3.0/.qca6490"]="MODNAME=qca_cld3_qca6490 WLAN_ROOT=$MODS/wlan/qcacld-3.0 CONFIG_QCA_CLD_WLAN_PROFILE=qca6490 CONFIG_QCA_CLD_WLAN=m BOARD_PLATFORM=taro"
           )
+          ORDER=(mmrm-driver audio-kernel camera-kernel eva-kernel video-driver display-drivers/msm \
+                 dataipa/drivers/platform/msm datarmnet/core datarmnet-ext/aps datarmnet-ext/offload \
+                 datarmnet-ext/shs datarmnet-ext/perf datarmnet-ext/perf_tether datarmnet-ext/sch \
+                 datarmnet-ext/wlan wlan/qcacld-3.0/.qca6490)
           mkdir -p modlogs
           ok=0; fail=0
-          for m in "${mods[@]}"; do
-            name=$(echo "$m" | tr '/' '_')
-            if make -j"$(nproc)" O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-                 M="$PWD/../modules/$m" modules > "modlogs/$name.log" 2>&1; then
-              echo "OK   : $m"
+          for u in "${ORDER[@]}"; do
+            name=$(echo "$u" | tr '/' '_')
+            if make -j"$(nproc)" $MK M="$MODS/$u" ${UNITS[$u]} modules > "modlogs/$name.log" 2>&1; then
+              echo "OK   : $u"
               ok=$((ok+1))
             else
-              echo "FAIL : $m"
+              echo "FAIL : $u"
               echo "----- tail of modlogs/$name.log -----"
               tail -40 "modlogs/$name.log" | sed 's/^/  | /'
               echo "-------------------------------------"
@@ -194,7 +203,6 @@ jobs:
             fi
           done
           echo "modules ok=$ok fail=$fail"
-          echo "MODULES_OK=$ok MODULES_FAIL=$fail" >> "$GITHUB_ENV"
           # do not hard-fail here: the assembly step reports exactly which LISTED
           # modules are missing, which is the actionable signal
 
@@ -211,10 +219,9 @@ jobs:
           set -e
           KVER=$(grep -oE '5\.10\.[0-9]+[^"]*' /tmp/kver.txt | head -1)
           echo "kernel release: $KVER"
-          # gather every built .ko in one place
           mkdir -p allko
-          find kernel/out -name '*.ko' -exec cp {} allko/ \;
-          find modules -name '*.ko' -exec cp {} allko/ \;
+          find kernel/oneplus/sm8450/out -name '*.ko' -exec cp {} allko/ \;
+          find kernel/oneplus/sm8450-modules -name '*.ko' -exec cp {} allko/ \;
           echo "total distinct .ko: $(ls allko | wc -l)"
 
           # ---- vendor_dlkm: exactly the modules.load set ----
@@ -236,7 +243,6 @@ jobs:
           echo "vendor_ramdisk .ko: $(ls pkg/vendor_ramdisk/*.ko | wc -l) / $(wc -l < ramdisk.set)"
           if [ "$missing" -ne 0 ]; then
             echo "FATAL: $missing listed modules were not built - see MISSING lines above"
-            echo "(if they are =y builtins in kernel.config, they must be flipped to =m)"
             exit 1
           fi
 
@@ -245,8 +251,8 @@ jobs:
           cp modules.load.recovery pkg/vendor_ramdisk/modules.load.recovery
           cp modules.load.vendor_boot pkg/vendor_ramdisk/modules.load
           # blocklist from the kernel source (qcom vendor blocklist for waipio)
-          cp kernel/modules.vendor_blocklist.msm.waipio pkg/vendor_dlkm/modules.blocklist
-          cp kernel/modules.vendor_blocklist.msm.waipio pkg/vendor_ramdisk/modules.blocklist
+          cp kernel/oneplus/sm8450/modules.vendor_blocklist.msm.waipio pkg/vendor_dlkm/modules.blocklist
+          cp kernel/oneplus/sm8450/modules.vendor_blocklist.msm.waipio pkg/vendor_ramdisk/modules.blocklist
 
           # ---- depmod metadata (modules.dep / .alias / .softdep) ----
           for sub in vendor_dlkm vendor_ramdisk; do
@@ -261,7 +267,7 @@ jobs:
 
           # ---- kernel-headers: merged techpack uapi + trivial headers_install Makefile ----
           mkdir -p pkg/kernel-headers
-          for d in modules/qcom/opensource/*/include/uapi; do
+          for d in kernel/oneplus/sm8450-modules/qcom/opensource/*/include/uapi; do
             [ -d "$d" ] && cp -r "$d"/. pkg/kernel-headers/
           done
           cat > pkg/kernel-headers/Makefile <<'EOF'
@@ -277,14 +283,13 @@ jobs:
           EOF
 
           # ---- Image + dtbs ----
-          cp kernel/out/arch/arm64/boot/Image pkg/Image
+          cp kernel/oneplus/sm8450/out/arch/arm64/boot/Image pkg/Image
           cp -r dtbs pkg/dtbs
           ls -la pkg/
           du -sh pkg/*
 
       - name: Verify package against device-tree expectations
         run: |
-          # every name in the package lists must have a .ko present in the same dir
           err=0
           while read -r m; do
             [ -z "$m" ] && continue
@@ -343,7 +348,7 @@ jobs:
           path: |
             udon-kernel-a17*-prebuilt.zip
             kernel.config
-            kernel/modlogs/*.log
+            kernel/oneplus/sm8450/modlogs/*.log
           if-no-files-found: warn
 
       - name: Create GitHub release
