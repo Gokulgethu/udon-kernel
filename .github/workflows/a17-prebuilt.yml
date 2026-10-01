@@ -222,7 +222,9 @@ jobs:
           # so both the completeness check and the packaged list agree.
           grep -v '^oplus_bsp_sched_assist.ko$' modules.load.recovery > modules.load.recovery.tmp
           mv modules.load.recovery.tmp modules.load.recovery
-          echo "modules.load.recovery after scrub: $(wc -l < modules.load.recovery) entries"
+          grep -v '^oplus_bsp_sched_assist.ko$' modules.load.vendor_boot > modules.load.vendor_boot.tmp
+          mv modules.load.vendor_boot.tmp modules.load.vendor_boot
+          echo "lists after scrub: recovery $(wc -l < modules.load.recovery), vendor_boot $(wc -l < modules.load.vendor_boot) entries"
 
       - name: Assemble prebuilt kernel package
         run: |
