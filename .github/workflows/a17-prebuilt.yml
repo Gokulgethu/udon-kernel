@@ -325,6 +325,9 @@ jobs:
         run: |
           git config user.name "udon-kernel-bot"
           git config user.email "udon-kernel-bot@users.noreply.github.com"
+          # large binary push: avoid HTTP/2 408 timeouts on ~150MB packs
+          git config http.version HTTP/1.1
+          git config http.postBuffer 157286400
           if git ls-remote --exit-code --heads origin "${{ inputs.package_branch }}${{ env.KSU_SUFFIX }}" >/dev/null 2>&1; then
             git fetch origin "${{ inputs.package_branch }}${{ env.KSU_SUFFIX }}"
             git checkout -B "${{ inputs.package_branch }}${{ env.KSU_SUFFIX }}" "origin/${{ inputs.package_branch }}${{ env.KSU_SUFFIX }}"
@@ -345,7 +348,12 @@ jobs:
           - layout: Image, dtbs/, kernel-headers/, vendor_dlkm/, vendor_ramdisk/
             (consumed via KERNEL_PATH := device/oneplus/udon-kernel)
           ${{ inputs.add_kernelsu == 'yes' && format('- KernelSU: tiann/KernelSU @ {0}', inputs.kernelsu_tag) || '- no KernelSU' }}"
-          git push origin "${{ inputs.package_branch }}${{ env.KSU_SUFFIX }}"
+          for i in 1 2 3 4 5; do
+            if git push origin "${{ inputs.package_branch }}${{ env.KSU_SUFFIX }}"; then break; fi
+            echo "push attempt $i failed - retrying in 30s"
+            sleep 30
+            [ "$i" = "5" ] && { echo "FATAL: push failed after 5 attempts"; exit 1; }
+          done
 
       - name: Package release zip
         run: |
