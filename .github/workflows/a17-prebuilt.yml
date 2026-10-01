@@ -315,6 +315,13 @@ jobs:
             [ -z "$m" ] && continue
             [ -f "pkg/vendor_ramdisk/$m" ] || { echo "vendor_ramdisk(recovery)/$m missing"; err=1; }
           done < pkg/vendor_ramdisk/modules.load.recovery
+          # strip debug sections the way the ROM module-install step does
+          # (run 10: raw build .ko carried full -g info; qcacld hit 363MB vs
+          #  27MB in the reference A17 package and exceeded GitHub's 100MB cap)
+          STRIP="$HOME/clang/bin/llvm-strip"
+          [ -x "$STRIP" ] || { echo "FATAL: llvm-strip not found"; exit 1; }
+          find pkg -name '*.ko' -print0 | xargs -0 "$STRIP" --strip-debug
+          echo "stripped .ko: $(find pkg -name '*.ko' | wc -l), largest now: $(du -m $(find pkg -name '*.ko') | sort -rn | head -3 | tr '\n' ' ')"
           [ -f pkg/Image ] && echo "Image OK: $(du -h pkg/Image | cut -f1)"
           [ -f pkg/dtbs/dtbo.img ] && echo "dtbo.img OK: $(du -h pkg/dtbs/dtbo.img | cut -f1)"
           [ -f pkg/kernel-headers/Makefile ] && echo "kernel-headers OK: $(find pkg/kernel-headers -type f | wc -l) files"
