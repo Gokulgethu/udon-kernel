@@ -150,39 +150,47 @@ jobs:
       - name: Build external modules (QSSI16 set)
         run: |
           cd kernel
-          # Find every Kbuild under qcom/opensource (up to depth 4), skip parents
-          # that also have a child Kbuild, and for qcacld use only the .qca6490 profile.
-          mapfile -t all_kb < <(find "$PWD/../modules/qcom/opensource" -maxdepth 4 -name Kbuild | sort)
-          declare -a build_paths=()
-          for kb in "${all_kb[@]}"; do
-            p="${kb%/Kbuild}"
-            case "$p" in
-              */qcacld-3.0) continue ;;                 # root qcacld Kbuild: skip
-              */qcacld-3.0/*) case "$p" in */.qca6490) ;; *) continue ;; esac ;;
-            esac
-            has_child=0
-            for other in "${all_kb[@]}"; do
-              q="${other%/Kbuild}"
-              if [ "$q" != "$p" ] && [[ "$q" == "$p"/* ]]; then has_child=1; break; fi
-            done
-            [ "$has_child" -eq 0 ] && build_paths+=("$p")
-          done
-          echo "=== module build paths (${#build_paths[@]}) ==="
-          printf '  %s\n' "${build_paths[@]#"${PWD}/../modules/"}"
+          # Explicit build units (proven in the A16 builder) - NOT find-discovered:
+          # sub-Kbuilds (audio-kernel/asoc/codecs, display-drivers/msm/iris, ...)
+          # are not standalone units and must not be built directly.
+          mods=(
+            "qcom/opensource/mmrm-driver"
+            "qcom/opensource/audio-kernel"
+            "qcom/opensource/camera-kernel"
+            "qcom/opensource/dataipa/drivers/platform/msm"
+            "qcom/opensource/datarmnet/core"
+            "qcom/opensource/datarmnet-ext/aps"
+            "qcom/opensource/datarmnet-ext/offload"
+            "qcom/opensource/datarmnet-ext/shs"
+            "qcom/opensource/datarmnet-ext/perf"
+            "qcom/opensource/datarmnet-ext/perf_tether"
+            "qcom/opensource/datarmnet-ext/sch"
+            "qcom/opensource/datarmnet-ext/wlan"
+            "qcom/opensource/display-drivers/msm"
+            "qcom/opensource/eva-kernel"
+            "qcom/opensource/video-driver"
+            "qcom/opensource/wlan/qcacld-3.0/.qca6490"
+          )
+          mkdir -p modlogs
           ok=0; fail=0
-          for m in "${build_paths[@]}"; do
+          for m in "${mods[@]}"; do
             name=$(echo "$m" | tr '/' '_')
             if make -j"$(nproc)" O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-                 M="$m" modules > "/tmp/$name.log" 2>&1; then
-              echo "OK   : ${m#$PWD/../modules/}"
+                 M="$PWD/../modules/$m" modules > "modlogs/$name.log" 2>&1; then
+              echo "OK   : $m"
               ok=$((ok+1))
             else
-              echo "FAIL : ${m#$PWD/../modules/}  (see /tmp/$name.log)"
+              echo "FAIL : $m"
+              echo "----- tail of modlogs/$name.log -----"
+              tail -40 "modlogs/$name.log" | sed 's/^/  | /'
+              echo "-------------------------------------"
               fail=$((fail+1))
             fi
           done
           echo "modules ok=$ok fail=$fail"
-          [ "$fail" -eq 0 ] || { echo "FATAL: $fail module dirs failed to build"; exit 1; }
+          echo "MODULES_OK=$ok MODULES_FAIL=$fail" >> "$GITHUB_ENV"
+          # do not hard-fail here: the assembly step reports exactly which LISTED
+          # modules are missing, which is the actionable signal
 
       - name: Fetch udon module lists from the A17 device tree
         run: |
@@ -329,6 +337,7 @@ jobs:
           path: |
             udon-kernel-a17*-prebuilt.zip
             kernel.config
+            kernel/modlogs/*.log
           if-no-files-found: warn
 
       - name: Create GitHub release
