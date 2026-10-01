@@ -105,11 +105,17 @@ jobs:
 
       - name: Fetch AOSP clang-r536225
         run: |
-          wget -q --progress=dot:giga \
-            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r536225.tar.gz" \
-            -O /tmp/clang.tar.gz
+          for i in 1 2 3 4 5 6; do
+            echo "clang fetch attempt $i"
+            curl -sfL --retry 3 --retry-delay 10 \
+              "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r536225.tar.gz" \
+              -o /tmp/clang.tar.gz && break
+            sleep 20
+          done
+          [ -s /tmp/clang.tar.gz ] || { echo "FATAL: clang download failed"; exit 1; }
           mkdir -p "$HOME/clang"
           tar -xzf /tmp/clang.tar.gz -C "$HOME/clang"
+          [ -x "$HOME/clang/bin/clang" ] || { echo "FATAL: extracted clang missing bin/clang"; ls -la "$HOME/clang" | head; exit 1; }
           echo "$HOME/clang/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/clang/bin:$PATH"
           clang --version | head -2
