@@ -171,16 +171,16 @@ jobs:
             ["camera-kernel"]="CAMERA_KERNEL_ROOT=$MODS/camera-kernel KERNEL_ROOT=$KDIR MODNAME=camera BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/mmrm-driver/Module.symvers"
             ["eva-kernel"]="EVA_ROOT=$MODS/eva-kernel BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/mmrm-driver/Module.symvers"
             ["video-driver"]="VIDEO_ROOT=$MODS/video-driver MODNAME=msm_video BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/mmrm-driver/Module.symvers"
-            ["display-drivers/msm"]="DISPLAY_ROOT=$MODS/display-drivers BOARD_PLATFORM=taro"
+            ["display-drivers/msm"]="DISPLAY_ROOT=$MODS/display-drivers MODNAME=msm_drm BOARD_PLATFORM=taro CONFIG_DRM_MSM=m KERNEL_ROOT=$KDIR KERNEL_SRC=$KDIR KBUILD_EXTRA_SYMBOLS=$MODS/mmrm-driver/Module.symvers"
             ["dataipa/drivers/platform/msm"]="BOARD_PLATFORM=taro"
             ["datarmnet/core"]="BOARD_PLATFORM=taro"
-            ["datarmnet-ext/aps"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro"
-            ["datarmnet-ext/offload"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro"
-            ["datarmnet-ext/shs"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro"
-            ["datarmnet-ext/perf"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro"
-            ["datarmnet-ext/perf_tether"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro"
-            ["datarmnet-ext/sch"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro"
-            ["datarmnet-ext/wlan"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro"
+            ["datarmnet-ext/aps"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/datarmnet/core/Module.symvers"
+            ["datarmnet-ext/offload"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/datarmnet/core/Module.symvers"
+            ["datarmnet-ext/shs"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/datarmnet/core/Module.symvers"
+            ["datarmnet-ext/perf"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/datarmnet/core/Module.symvers"
+            ["datarmnet-ext/perf_tether"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/datarmnet/core/Module.symvers"
+            ["datarmnet-ext/sch"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/datarmnet/core/Module.symvers"
+            ["datarmnet-ext/wlan"]="RMNET_CORE_INC_DIR=$MODS/datarmnet/core RMNET_CORE_PATH=$MODS/datarmnet/core DATARMNET_CORE_PATH=$MODS/datarmnet/core BOARD_PLATFORM=taro KBUILD_EXTRA_SYMBOLS=$MODS/datarmnet/core/Module.symvers"
             ["wlan/qcacld-3.0/.qca6490"]="MODNAME=qca_cld3_qca6490 WLAN_ROOT=$MODS/wlan/qcacld-3.0 CONFIG_QCA_CLD_WLAN_PROFILE=qca6490 CONFIG_QCA_CLD_WLAN=m BOARD_PLATFORM=taro"
           )
           ORDER=(mmrm-driver audio-kernel camera-kernel eva-kernel video-driver display-drivers/msm \
@@ -248,7 +248,9 @@ jobs:
 
           # ---- list files inside the package (BoardConfig reads them from here) ----
           cp modules.load pkg/vendor_dlkm/modules.load
-          cp modules.load.recovery pkg/vendor_ramdisk/modules.load.recovery
+          # oplus_bsp_sched_assist.ko: absent from the 5.10 kernel source entirely
+          # (A16 lists never had it; inert entry added with the A17 list refresh)
+          grep -v '^oplus_bsp_sched_assist.ko$' modules.load.recovery > pkg/vendor_ramdisk/modules.load.recovery
           cp modules.load.vendor_boot pkg/vendor_ramdisk/modules.load
           # blocklist from the kernel source (qcom vendor blocklist for waipio)
           cp kernel/oneplus/sm8450/modules.vendor_blocklist.msm.waipio pkg/vendor_dlkm/modules.blocklist
