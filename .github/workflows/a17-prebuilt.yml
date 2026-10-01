@@ -306,14 +306,14 @@ jobs:
           git add -A vendor_dlkm vendor_ramdisk kernel-headers dtbs Image
           git commit -qm "A17 prebuilt kernel package (lineage-24.0)
 
-- kernel: rocko5498/android_kernel_oneplus_sm8450 @ ${{ inputs.kernel_revision }}
-- modules: ${{ inputs.modules_repo }} @ ${{ inputs.modules_revision }} (QSSI16.0 WAIPIO)
-- config: gki_defconfig + vendor/waipio_GKI.config + vendor/oplus_GKI.config + vendor/debugfs.config
-- toolchain: AOSP clang-r536225, LLVM=1 LLVM_IAS=1
-- dtbs: from stock CPH2487_16.0.5.700(EX01) firmware (dtbo.img + base dtbs)
-- layout: Image, dtbs/, kernel-headers/, vendor_dlkm/, vendor_ramdisk/
-  (consumed via KERNEL_PATH := device/oneplus/udon-kernel)
-${{ inputs.add_kernelsu == 'yes' && format('- KernelSU: tiann/KernelSU @ {0}', inputs.kernelsu_tag) || '- no KernelSU' }}"
+          - kernel: rocko5498/android_kernel_oneplus_sm8450 @ ${{ inputs.kernel_revision }}
+          - modules: ${{ inputs.modules_repo }} @ ${{ inputs.modules_revision }} (QSSI16.0 WAIPIO)
+          - config: gki_defconfig + vendor/waipio_GKI.config + vendor/oplus_GKI.config + vendor/debugfs.config
+          - toolchain: AOSP clang-r536225, LLVM=1 LLVM_IAS=1
+          - dtbs: from stock CPH2487_16.0.5.700(EX01) firmware (dtbo.img + base dtbs)
+          - layout: Image, dtbs/, kernel-headers/, vendor_dlkm/, vendor_ramdisk/
+            (consumed via KERNEL_PATH := device/oneplus/udon-kernel)
+          ${{ inputs.add_kernelsu == 'yes' && format('- KernelSU: tiann/KernelSU @ {0}', inputs.kernelsu_tag) || '- no KernelSU' }}"
           git push origin "${{ inputs.package_branch }}${{ env.KSU_SUFFIX }}"
 
       - name: Package release zip
